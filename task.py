@@ -15,14 +15,6 @@ class Task():
             runtime: time limit for each episode
             target_pos: target/goal (x,y,z) position for the agent
         """
-        # Simulation
-        self.sim = PhysicsSim(init_pose, init_velocities, init_angle_velocities, runtime) 
-        self.action_repeat = 3
-
-        self.state_size = self.action_repeat * 6
-        self.action_low = 0
-        self.action_high = 900
-        self.action_size = 4
         
         # State space: <position_x, .._y, .._z, orientation_x, .._y, .._z, .._w>
         cube_size = 300.0  # env is cube_size x cube_size x cube_size
@@ -42,6 +34,10 @@ class Task():
         # Task-specific parameters
         self.max_duration = 5.0  # secs
         self.target_z = 10.0  # target height (z position) to reach for successful takeoff
+        
+        # Simulation
+        self.sim = PhysicsSim(init_pose, init_velocities, init_angle_velocities, runtime) 
+        self.action_repeat = 3
 
         # Goal
         self.target_pos = target_pos if target_pos is not None else np.array([0., 0., 10.]) 
