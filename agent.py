@@ -4,17 +4,36 @@ import pandas as pd
 from keras import layers, models, optimizers, regularizers
 from keras import backend as K
 from collections import namedtuple
+# import util
 
 class DDPG():
     """Reinforcement Learning agent that learns using DDPG."""
     def __init__(self, task):
+        # Define state spaces
         self.task = task
-        self.state_size = task.state_size
-        self.action_size = task.action_size
-        self.action_low = task.action_low
-        self.action_high = task.action_high
+        self.state_size = 3
         self.state_range = self.task.observation_space.high - self.task.observation_space.low
-
+        
+        # Define action spaces
+        self.action_size = 3
+        self.action_low = self.task.action_space.low[0:3]
+        self.action_high = self.task.action_space.high[0:3]        
+        action = [self.action_size, self.action_low, self.action_high]
+        
+        # Load/save parameters
+#         self.load_weights = True  # try to load weights from previously saved models
+#         self.save_weights_every = 10  # save weights every n episodes, None to disable
+#         self.model_dir = util.get_param('out')  
+#         self.model_name = "Mode_parameters"
+#         self.model_ext = ".h5"
+#         if self.load_weights or self.save_weights_every:
+#             self.actor_filename = os.path.join(self.model_dir,
+#                 "{}_actor{}".format(self.model_name, self.model_ext))
+#             self.critic_filename = os.path.join(self.model_dir,
+#                 "{}_critic{}".format(self.model_name, self.model_ext))
+#             print("Actor filename :", self.actor_filename)  # [debug]
+#             print("Critic filename:", self.critic_filename)  # [debug]
+                 
         # Actor (Policy) Model
         self.actor_local = Actor(self.state_size, self.action_size, self.action_low, self.action_high)
         self.actor_target = Actor(self.state_size, self.action_size, self.action_low, self.action_high)
@@ -22,6 +41,20 @@ class DDPG():
         # Critic (Value) Model
         self.critic_local = Critic(self.state_size, self.action_size)
         self.critic_target = Critic(self.state_size, self.action_size)
+        
+        # Load pre-trained model weights, if available
+#         if self.load_weights and os.path.isfile(self.actor_filename):
+#             try:
+#                 self.actor_local.model.load_weights(self.actor_filename)
+#                 self.critic_local.model.load_weights(self.critic_filename)
+#                 print("Model weights loaded from file!")  # [debug]
+#             except Exception as e:
+#                 print("Unable to load model weights from file!")
+#                 print("{}: {}".format(e.__class__.__name__, str(e)))
+
+#         if self.save_weights_every:
+#             print("Saving model weights", "every {} episodes".format(
+#                 self.save_weights_every) if self.save_weights_every else "disabled")  # [debug]
 
         # Initialize target model parameters with local model parameters
         self.critic_target.model.set_weights(self.critic_local.model.get_weights())
@@ -39,6 +72,14 @@ class DDPG():
         self.gamma = 0.99  # discount factor
         self.tau = 0.01  # for soft update of target parameters
         self.alpha = 0.005 # decay rate for exploration
+        
+        # Save episode stats
+#         self.stats_filename = os.path.join(
+#             util.get_param('out'),
+#             "stats_{}.csv".format(util.get_timestamp()))  # path to CSV file
+#         self.stats_columns = ['episode', 'total_reward']  # specify columns to save
+#         self.episode_num = 1
+#         print("Saving stats {} to {}".format(self.stats_columns, self.stats_filename))  # [debug]
 
     def reset_episode(self):
         self.noise.reset()
@@ -48,22 +89,18 @@ class DDPG():
     
     def preprocess_state(self, state):
         """Reduce sate vector to relevant dimensions"""
-        return np.array([state[2], state[9]]) # position and velocity
+        return state[2]
 
     def postprocess_action(self, action):
-        """Return complete action vector."""
-        complete_action = np.zeros(self.task.action_space.shape) # shape: (6,)
-        # action[-1,2] = np.abs(action[-1,2])
-        complete_action[2] = action # linear force only
-        # print(complete_action)
-        return complete_action
+        constrained_action = np.zeros(self.task.action_space.shape)
+        constrained_action[2] = action
+        return constrained_action # linear force only
 
-    def step(self,reward, next_state, done):
-        
-        state = (state - self.task.observation_space.low[:self.state_size]) / self.state_range[:self.state_size]  # scale to [0.0, 1.0]
-        state = state.reshape(1, -1)  # convert to row vector
+    def step(self,reward, state, done):
+        state = (state - self.task.observation_space.low[:self.state_size])/self.state_range[:self.state_size]
+        state = state.reshape(1, -1)
         state = self.preprocess_state(state)
-
+        
         # Choose an action
         action = self.act(state)
         
@@ -79,12 +116,26 @@ class DDPG():
             experiences = self.memory.sample(self.batch_size)
             self.learn(experiences)
             
+            self.episode_no += 1
+            
+        if done:
+            if self.save_weights_every and self.episode_no % self.save_weights_every == 0:
+                self.actor_local.model.save_weights(self.actor_filename)
+                self.critic_local.model.save_weights(self.critic_filename)
+                print("Model weights saved at episode", self.episode_no)
+            self.write([self.episode_no, self.total_reward])
+            self.reset_episode_vars()
 
+        self.last_state = state
+        self.last_action = action
+        
+        return self.postprocess_action(action)
+            
     def act(self, states):
         """Returns actions for given state(s) as per current policy."""
-        state_ = np.reshape(states, [-1, self.state_size])
-        action = self.actor_local.model.predict(state_)[0]
-        return list(action + self.noise.sample())  # add some noise for exploration
+        states = np.reshape(states, [-1, self.state_size])
+        actions = self.actor_local.model.predict(states)
+        return actions + self.noise.sample()  # add some noise for exploration
 
     def learn(self, experiences):
         """Update policy and value parameters using given batch of experience tuples."""
